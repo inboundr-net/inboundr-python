@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inboundr"
+dynamic = ["version"]
+description = "Python SDK for the Inboundr API: receive email over signed webhooks, read and reply to it."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Inboundr", email = "dev@inboundr.net" }]
+keywords = ["email", "inbound-email", "webhook", "webhook-verification", "inboundr"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Communications :: Email",
+  "Typing :: Typed",
+]
+dependencies = ["httpx>=0.27,<1", "typing_extensions>=4.10"]
+
+[project.urls]
+Homepage = "https://inboundr.net"
+Documentation = "https://inboundr.net/docs"
+Repository = "https://github.com/inboundr-net/inboundr-python"
+Issues = "https://github.com/inboundr-net/inboundr-python/issues"
+
+[tool.hatch.version]
+path = "src/inboundr/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inboundr"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/inboundr", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src/inboundr", "tests/typecheck"]

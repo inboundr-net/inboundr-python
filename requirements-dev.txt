@@ -1,0 +1,7 @@
+# Test and maintenance tools, pinned so CI and local runs agree.
+pytest==9.2.0
+mypy==2.4.1
+PyYAML==6.0.3
+build==1.3.0
+# Generates src/inboundr/_generated/api.py; needs Python 3.11+.
+datamodel-code-generator==0.99.0; python_version >= "3.11"

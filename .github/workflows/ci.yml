@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt -e .
+      # Includes the checks that src/inboundr/_generated/api.py matches the
+      # spec and _client.py matches _async_client.py.
+      - run: pytest
+      - run: mypy
+
+  publish:
+    # Tags only, and only after the whole matrix is green.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # PyPI trusted publishing: GitHub issues an OIDC token that PyPI accepts
+      # for this repo and this workflow file (ci.yml), so no API token exists.
+      # The same token signs the attestations the publish action uploads.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Tag must match package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(python -c 'import re; print(re.search(r"\"(.+)\"", open("src/inboundr/_version.py").read()).group(1))')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match _version.py $pkg"
+            exit 1
+          fi
+      - run: pip install build==1.3.0 && python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
