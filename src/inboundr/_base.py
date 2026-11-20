@@ -17,6 +17,17 @@ API_KEY_ENV_VAR = "INBOUNDR_API_KEY"
 DEFAULT_TIMEOUT = 30.0
 
 
+class NotGiven:
+    """Marks an argument the caller left out, where `None` is a real value
+    (`timeout=None` disables the timeout)."""
+
+    def __repr__(self) -> str:
+        return "NOT_GIVEN"
+
+
+NOT_GIVEN = NotGiven()
+
+
 def resolve_api_key(api_key: str | None) -> str:
     key = api_key or os.environ.get(API_KEY_ENV_VAR)
     if not key:
@@ -69,7 +80,24 @@ def handle_response(response: httpx.Response, *, raw: bool = False) -> Any:
         try:
             return response.json()
         except ValueError:
-            return response.text
+            # Every API response is JSON, so this is something in between (a
+            # proxy, a captive portal, the wrong base_url) answering instead.
+            content_type = response.headers.get("content-type", "no content-type")
+            raise InboundrError(
+                f"Expected JSON from {response.request.method} {response.request.url.path}, "
+                f"got {response.status_code} {content_type}: {response.text[:200]!r}. "
+                "Check base_url and any proxy in between."
+            ) from None
+
+    if response.is_redirect:
+        location = response.headers.get("location", "(no location)")
+        raise InboundrAPIError(
+            f"Got a {response.status_code} redirect to {location}. The SDK doesn't follow "
+            "redirects; set base_url to the final address, e.g. https://inboundr.net.",
+            status=response.status_code,
+            body=response.text,
+            request_id=request_id,
+        )
 
     try:
         body: Any = response.json()
@@ -91,7 +119,7 @@ def handle_response(response: httpx.Response, *, raw: bool = False) -> Any:
     raise InboundrAPIError(message, status=response.status_code, body=body, request_id=request_id)
 
 
-def transport_error(method: str, path: str, exc: Exception, timeout: float | None) -> InboundrError:
+def transport_error(method: str, path: str, exc: Exception) -> InboundrError:
     if isinstance(exc, httpx.TimeoutException):
-        return InboundrError(f"{method} {path} timed out after {timeout}s.")
+        return InboundrError(f"{method} {path} timed out ({type(exc).__name__}). Pass a larger timeout if needed.")
     return InboundrError(f"{method} {path} failed: {exc}")

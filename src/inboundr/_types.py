@@ -20,7 +20,7 @@ __all__ = [
     "CreateSuppressionParams", "Delivery", "DeliveryStatus", "DnsRecord", "Domain", "DomainDetail",
     "DomainState", "Email", "EmailAttachment", "EmailDirection", "EmailReceivedEvent", "EmailSummary",
     "Endpoint", "EndpointTestResult", "EndpointType", "EndpointWithSecret", "ForwardDestination",
-    "ForwardDestinationRequest", "InboundEmail", "List", "ListDeliveriesParams", "ListEmailsParams",
+    "ForwardDestinationRequest", "InboundEmail", "ListDeliveriesParams", "ListEmailsParams", "ListResponse",
     "Page", "ReplaceShieldRuleParams", "ReplyParams", "RetryResult", "SendEmailParams", "Sender",
     "SendStatus", "SentEmail", "ShieldAction", "ShieldCondition", "ShieldField", "ShieldOperator",
     "ShieldRule", "ShieldRuleOrder", "Suppression", "SuppressedAddress", "SuppressionReason", "Thread",
@@ -40,7 +40,9 @@ class Page(TypedDict, Generic[T]):
     nextCursor: str | None
 
 
-class List(TypedDict, Generic[T]):
+class ListResponse(TypedDict, Generic[T]):
+    """An unpaginated list. Named so it doesn't shadow `typing.List`."""
+
     data: list[T]
 
 

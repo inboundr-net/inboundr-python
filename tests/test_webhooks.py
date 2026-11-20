@@ -240,3 +240,39 @@ def test_missing_ids_are_missing_header() -> None:
 def test_read_webhook_headers_folds_in_legacy_names() -> None:
     read = read_webhook_headers({LEGACY_SIGNATURE_HEADER: "sig", LEGACY_DELIVERY_ID_HEADER: "del_1", "X-Inboundr-Email-Id": "em_1"})
     assert (read.signature, read.delivery_id, read.email_id) == ("sig", "del_1", "em_1")
+
+
+# --- inputs from real frameworks and hostile senders -----------------------------------
+
+
+def test_a_huge_timestamp_is_malformed_not_a_crash() -> None:
+    header = "t=" + "9" * 5000 + ",v1=" + "ab" * 32
+    rejects("malformed_header", lambda: verify_webhook(BODY, header, SECRET, now=now))
+
+
+@pytest.mark.parametrize("wrap", [bytearray, memoryview], ids=["bytearray", "memoryview"])
+def test_bytes_like_bodies_verify(wrap) -> None:  # type: ignore[no-untyped-def]
+    assert verify_webhook(wrap(BODY), sign(SECRET, BODY, NOW), SECRET, now=now)["event"] == "email.received"
+
+
+def test_a_non_bytes_body_is_a_type_error() -> None:
+    with pytest.raises(TypeError, match="raw request body"):
+        verify_webhook(json.loads(BODY), sign(SECRET, BODY, NOW), SECRET, now=now)  # type: ignore[arg-type]
+
+
+def test_raw_asgi_bytes_headers_are_read() -> None:
+    scope_headers = {
+        b"x-inboundr-signature": sign(SECRET, BODY, NOW).encode(),
+        b"content-type": b"application/json",
+    }
+    assert verify_webhook(BODY, scope_headers, SECRET, now=now)["email"]["id"] == "em_7Kq2mR"
+    ids = verify_webhook_ids(
+        {
+            ID_SIGNATURE_HEADER.encode(): sign_ids(SECRET, NOW, DELIVERY_ID, EMAIL_ID).encode(),
+            DELIVERY_ID_HEADER.encode(): DELIVERY_ID.encode(),
+            EMAIL_ID_HEADER.encode(): EMAIL_ID.encode(),
+        },
+        SECRET,
+        now=now,
+    )
+    assert ids.email_id == EMAIL_ID

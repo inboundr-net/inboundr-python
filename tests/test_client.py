@@ -184,8 +184,70 @@ def test_timeouts_and_transport_failures_raise_inboundr_error() -> None:
         raise httpx.ReadTimeout("slow", request=request)
 
     client, _ = client_with(timeout, timeout=1.5)
-    with pytest.raises(InboundrError, match="timed out after 1.5s"):
+    with pytest.raises(InboundrError, match="timed out"):
         client.domains.list()
+
+
+# --- timeouts --------------------------------------------------------------------
+
+
+def _timeout_seen(**kwargs: Any) -> Any:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": []})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler), timeout=kwargs.pop("client_timeout", 5.0))
+    Inboundr(KEY, http_client=http, **kwargs).domains.list()
+    return seen[0].extensions["timeout"]
+
+
+def test_your_own_http_clients_timeout_applies() -> None:
+    assert _timeout_seen(client_timeout=120.0)["read"] == 120.0
+
+
+def test_an_explicit_timeout_overrides_your_client() -> None:
+    assert _timeout_seen(client_timeout=120.0, timeout=7.0)["read"] == 7.0
+
+
+def test_timeout_none_disables_it_only_when_asked() -> None:
+    assert _timeout_seen(client_timeout=120.0, timeout=None)["read"] is None
+
+
+def test_the_default_client_uses_30_seconds() -> None:
+    client = Inboundr(KEY)
+    assert client._http.timeout.read == 30.0
+
+
+# --- responses that aren't the API's ------------------------------------------------
+
+
+def test_a_redirect_names_where_it_points() -> None:
+    client, _ = client_with(reply(301, "", {"location": "https://inboundr.net/api/v1/domains"}), base_url="http://inboundr.net")
+    with pytest.raises(InboundrAPIError, match="redirect to https://inboundr.net/api/v1/domains"):
+        client.domains.list()
+
+
+def test_a_non_json_success_raises_instead_of_returning_text() -> None:
+    client, _ = client_with(reply(200, "<html>Sign in to Wi-Fi</html>", {"content-type": "text/html"}))
+    with pytest.raises(InboundrError, match="Expected JSON"):
+        list(client.emails.list_all())
+
+
+def test_list_all_deliveries_pages_through_the_shared_helper() -> None:
+    pages = iter([{"data": [{"id": "del_1"}], "nextCursor": "c"}, {"data": [{"id": "del_2"}], "nextCursor": None}])
+    client, seen = client_with(lambda _: httpx.Response(200, json=next(pages)))
+    assert [d["id"] for d in client.endpoints.list_all_deliveries("ep_1", {"status": "dead"})] == ["del_1", "del_2"]
+    assert seen[1].url.params["cursor"] == "c" and seen[1].url.params["status"] == "dead"
+    assert seen[0].url.path.endswith("/endpoints/ep_1/deliveries")
+
+
+def test_list_is_not_exported_over_typing_list() -> None:
+    import inboundr
+
+    assert "List" not in inboundr.__all__
+    assert "ListResponse" in inboundr.__all__
 
 
 # --- async -------------------------------------------------------------------------

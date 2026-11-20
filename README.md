@@ -194,10 +194,12 @@ Requests are not retried automatically.
 client = Inboundr(
     "inb_123456789",
     base_url="https://inboundr.net",  # default
-    timeout=30.0,                     # seconds, default
+    timeout=30.0,                     # seconds, default; None disables it
     http_client=httpx.Client(),       # optional, your own client
 )
 ```
+
+With your own `http_client`, its timeout is used unless you also pass `timeout`.
 
 ## Contributing
 

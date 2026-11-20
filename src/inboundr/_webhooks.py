@@ -75,21 +75,28 @@ class WebhookIds:
     email_id: str
 
 
+def _text(value: Any) -> str:
+    # Raw ASGI headers are bytes; HTTP header bytes are latin-1 by definition.
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("latin-1")
+    return str(value)
+
+
 def _header_getter(headers: HeadersLike) -> Callable[[str], str | None]:
     if isinstance(headers, Mapping):
-        lowered = {str(k).lower(): v for k, v in headers.items()}
+        lowered = {_text(k).lower(): v for k, v in headers.items()}
 
         def get(name: str) -> str | None:
             value = lowered.get(name)
             if isinstance(value, (list, tuple)):
                 value = value[0] if value else None
-            return None if value is None else str(value)
+            return None if value is None else _text(value)
 
         return get
 
     def get_any(name: str) -> str | None:
         value = headers.get(name)
-        return None if value is None else str(value)
+        return None if value is None else _text(value)
 
     return get_any
 
@@ -112,7 +119,9 @@ def read_webhook_headers(headers: HeadersLike) -> WebhookHeaders:
 
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
-_DIGITS = re.compile(r"^[0-9]+$")
+# Unix seconds. Bounded so an attacker can't make int() parse thousands of
+# digits (Python refuses past 4300 with a plain ValueError, not ours).
+_DIGITS = re.compile(r"^[0-9]{1,15}$")
 
 
 def _parse_signature(header: str) -> tuple[int, list[str]] | None:
@@ -189,7 +198,7 @@ def _signature_from(signature: str | HeadersLike | None) -> str | None:
 
 
 def verify_webhook(
-    payload: bytes | str,
+    payload: bytes | bytearray | memoryview | str,
     signature: str | HeadersLike | None,
     secret: str,
     *,
@@ -198,13 +207,20 @@ def verify_webhook(
 ) -> EmailReceivedEvent:
     """Verify a delivery and return the event.
 
-    `payload` is the raw request body, as bytes or text. `signature` is the
+    `payload` is the raw request body, as bytes (or bytearray/memoryview) or text. `signature` is the
     request's headers (any mapping or headers object) or the signature header's
     value. Raises `InboundrSignatureError` if the request can't be verified.
     """
     _require_secret(secret)
     header = _require_header(_signature_from(signature), SIGNATURE_HEADER)
-    body = payload if isinstance(payload, bytes) else payload.encode()
+    if isinstance(payload, str):
+        body = payload.encode()
+    elif isinstance(payload, (bytes, bytearray, memoryview)):
+        body = bytes(payload)
+    else:
+        raise TypeError(
+            f"payload must be the raw request body as bytes or str, not {type(payload).__name__}"
+        )
     if not body:
         raise InboundrSignatureError(
             "missing_body",

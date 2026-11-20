@@ -29,7 +29,7 @@ from ._types import (
     EndpointWithSecret,
     ForwardDestination,
     ForwardDestinationRequest,
-    List,
+    ListResponse,
     ListDeliveriesParams,
     ListEmailsParams,
     Page,
@@ -69,14 +69,23 @@ class AsyncInboundr:
         api_key: str | None = None,
         *,
         base_url: str = _base.DEFAULT_BASE_URL,
-        timeout: float | None = _base.DEFAULT_TIMEOUT,
+        timeout: float | None | _base.NotGiven = _base.NOT_GIVEN,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """`timeout` is in seconds, 30 by default; `None` disables it. With your
+        own `http_client`, its timeout applies unless you also pass `timeout`."""
         key = _base.resolve_api_key(api_key)
         self.base_url = base_url.rstrip("/")
-        self._timeout = timeout
         self._owns_client = http_client is None
-        self._http = http_client or httpx.AsyncClient(timeout=timeout)
+        if http_client is None:
+            effective = _base.DEFAULT_TIMEOUT if isinstance(timeout, _base.NotGiven) else timeout
+            self._http = httpx.AsyncClient(timeout=effective)
+        else:
+            self._http = http_client
+        # Per request: the explicit value, or whatever the httpx client is set to.
+        self._request_timeout: Any = (
+            httpx.USE_CLIENT_DEFAULT if isinstance(timeout, _base.NotGiven) else timeout
+        )
         self._url = _base.base_api_url(self.base_url)
         self._headers = _base.default_headers(key)
 
@@ -106,10 +115,10 @@ class AsyncInboundr:
                 params=_base.clean_query(query),
                 json=body,
                 headers=self._headers,
-                timeout=self._timeout,
+                timeout=self._request_timeout,
             )
         except httpx.HTTPError as exc:
-            raise _base.transport_error(method, path, exc, self._timeout) from exc
+            raise _base.transport_error(method, path, exc) from exc
         return _base.handle_response(response, raw=raw)
 
     async def close(self) -> None:
@@ -127,22 +136,27 @@ class _AsyncResource:
     def __init__(self, client: AsyncInboundr) -> None:
         self._client = client
 
+    async def _paginate(self, path: str, params: Any) -> AsyncIterator[Any]:
+        """Yield every item of a keyset-paginated listing, one page per request,
+        fetched as the caller iterates. Stops at the first page with no cursor."""
+        query: dict[str, Any] = dict(params or {})
+        while True:
+            page = await self._client._request("GET", path, query=query)
+            for item in page["data"]:
+                yield item
+            if not page["nextCursor"]:
+                return
+            query["cursor"] = page["nextCursor"]
+
 
 class AsyncEmails(_AsyncResource):
     async def list(self, params: ListEmailsParams | None = None) -> Page[EmailSummary]:
         """One page of emails, newest first. Bodies are omitted; use `get`."""
         return cast(Page[EmailSummary], await self._client._request("GET", "/emails", query=params))
 
-    async def list_all(self, params: ListEmailsParams | None = None) -> AsyncIterator[EmailSummary]:
+    def list_all(self, params: ListEmailsParams | None = None) -> AsyncIterator[EmailSummary]:
         """Every matching email, newest first, fetching pages as you iterate."""
-        query: dict[str, Any] = dict(params or {})
-        while True:
-            page = await self.list(cast(ListEmailsParams, query))
-            for item in page["data"]:
-                yield item
-            if not page["nextCursor"]:
-                return
-            query["cursor"] = page["nextCursor"]
+        return self._paginate("/emails", params)
 
     async def get(self, id: str) -> Email:
         return cast(Email, await self._client._request("GET", f"/emails/{_seg(id)}"))
@@ -170,7 +184,8 @@ class AsyncEmails(_AsyncResource):
         )
 
     async def download_attachment(self, email_id: str, index: int) -> bytes:
-        """The attachment's bytes, streamed through the API."""
+        """Download the attachment through the API and return its bytes. The whole
+        file is held in memory; for large files, use `attachment_url` instead."""
         return cast(
             bytes,
             await self._client._request(
@@ -189,8 +204,8 @@ class AsyncThreads(_AsyncResource):
 
 
 class AsyncDomains(_AsyncResource):
-    async def list(self) -> List[Domain]:
-        return cast(List[Domain], await self._client._request("GET", "/domains"))
+    async def list(self) -> ListResponse[Domain]:
+        return cast(ListResponse[Domain], await self._client._request("GET", "/domains"))
 
     async def create(self, params: CreateDomainParams) -> DomainDetail:
         """Register a domain. Publish the returned `dnsRecords`, then poll `get`."""
@@ -209,8 +224,8 @@ class AsyncDomains(_AsyncResource):
 
 
 class AsyncAddresses(_AsyncResource):
-    async def list(self) -> List[Address]:
-        return cast(List[Address], await self._client._request("GET", "/addresses"))
+    async def list(self) -> ListResponse[Address]:
+        return cast(ListResponse[Address], await self._client._request("GET", "/addresses"))
 
     async def create(self, params: CreateAddressParams) -> CreatedAddress:
         """With no `endpointIds` the address is store-only."""
@@ -228,8 +243,8 @@ class AsyncAddresses(_AsyncResource):
 
 
 class AsyncEndpoints(_AsyncResource):
-    async def list(self) -> List[Endpoint]:
-        return cast(List[Endpoint], await self._client._request("GET", "/endpoints"))
+    async def list(self) -> ListResponse[Endpoint]:
+        return cast(ListResponse[Endpoint], await self._client._request("GET", "/endpoints"))
 
     async def create(self, params: CreateEndpointParams) -> EndpointWithSecret:
         """Create an endpoint. The response is the only time `secret` is returned."""
@@ -256,24 +271,17 @@ class AsyncEndpoints(_AsyncResource):
             await self._client._request("GET", f"/endpoints/{_seg(id)}/deliveries", query=params),
         )
 
-    async def list_all_deliveries(
+    def list_all_deliveries(
         self, id: str, params: ListDeliveriesParams | None = None
     ) -> AsyncIterator[Delivery]:
         """Every matching delivery, newest first, fetching pages as you iterate."""
-        query: dict[str, Any] = dict(params or {})
-        while True:
-            page = await self.deliveries(id, cast(ListDeliveriesParams, query))
-            for item in page["data"]:
-                yield item
-            if not page["nextCursor"]:
-                return
-            query["cursor"] = page["nextCursor"]
+        return self._paginate(f"/endpoints/{_seg(id)}/deliveries", params)
 
 
 class AsyncShieldRules(_AsyncResource):
-    async def list(self) -> List[ShieldRule]:
+    async def list(self) -> ListResponse[ShieldRule]:
         """Rules in evaluation order. The first match wins."""
-        return cast(List[ShieldRule], await self._client._request("GET", "/shield-rules"))
+        return cast(ListResponse[ShieldRule], await self._client._request("GET", "/shield-rules"))
 
     async def create(self, params: CreateShieldRuleParams) -> ShieldRule:
         """Create a rule. It goes last in the order."""
@@ -307,14 +315,14 @@ class AsyncShieldRules(_AsyncResource):
 
 
 class AsyncSenders(_AsyncResource):
-    async def list(self) -> List[Sender]:
+    async def list(self) -> ListResponse[Sender]:
         """Senders connected in the console."""
-        return cast(List[Sender], await self._client._request("GET", "/senders"))
+        return cast(ListResponse[Sender], await self._client._request("GET", "/senders"))
 
 
 class AsyncSuppressions(_AsyncResource):
-    async def list(self) -> List[Suppression]:
-        return cast(List[Suppression], await self._client._request("GET", "/suppressions"))
+    async def list(self) -> ListResponse[Suppression]:
+        return cast(ListResponse[Suppression], await self._client._request("GET", "/suppressions"))
 
     async def create(self, params: CreateSuppressionParams) -> SuppressedAddress:
         return cast(SuppressedAddress, await self._client._request("POST", "/suppressions", body=params))
@@ -324,8 +332,8 @@ class AsyncSuppressions(_AsyncResource):
 
 
 class AsyncForwardDestinations(_AsyncResource):
-    async def list(self) -> List[ForwardDestination]:
-        return cast(List[ForwardDestination], await self._client._request("GET", "/forward-destinations"))
+    async def list(self) -> ListResponse[ForwardDestination]:
+        return cast(ListResponse[ForwardDestination], await self._client._request("GET", "/forward-destinations"))
 
     async def create(self, params: CreateForwardDestinationParams) -> ForwardDestinationRequest:
         """Ask an address to confirm it will accept forwarded mail."""
