@@ -30,10 +30,12 @@ __all__ = [
     "LEGACY_SIGNATURE_HEADER",
     "LEGACY_DELIVERY_ID_HEADER",
     "DEFAULT_TOLERANCE_SECONDS",
+    "WebhookDelivery",
     "WebhookHeaders",
     "WebhookIds",
     "read_webhook_headers",
     "verify_webhook",
+    "verify_webhook_delivery",
     "verify_webhook_ids",
 ]
 
@@ -73,6 +75,15 @@ class WebhookHeaders:
 class WebhookIds:
     delivery_id: str
     email_id: str
+
+
+@dataclass(frozen=True)
+class WebhookDelivery:
+    """A delivery whose body and ids both verified. `delivery_id` is signed,
+    so it is safe to deduplicate retries on."""
+
+    event: EmailReceivedEvent
+    delivery_id: str
 
 
 def _text(value: Any) -> str:
@@ -268,3 +279,30 @@ def verify_webhook_ids(
         now,
     )
     return WebhookIds(delivery_id=delivery_id, email_id=email_id)
+
+
+def verify_webhook_delivery(
+    payload: bytes | bytearray | memoryview | str,
+    headers: HeadersLike,
+    secret: str,
+    *,
+    tolerance_seconds: float = DEFAULT_TOLERANCE_SECONDS,
+    now: Callable[[], float] | None = None,
+) -> WebhookDelivery:
+    """Verify a delivery's body and its id signature, and return the event with
+    a delivery id that is safe to deduplicate retries on.
+
+    The body signature covers only the body, so a delivery id read straight
+    from the headers could be changed by someone replaying a captured delivery.
+    This also checks `x-inboundr-id-signature`, and that it names the same email
+    as the body::
+
+        delivery = verify_webhook_delivery(request.get_data(), request.headers, secret)
+        if already_handled(delivery.delivery_id):
+            return "", 204
+    """
+    event = verify_webhook(payload, headers, secret, tolerance_seconds=tolerance_seconds, now=now)
+    ids = verify_webhook_ids(headers, secret, tolerance_seconds=tolerance_seconds, now=now)
+    if ids.email_id != event["email"]["id"]:
+        raise InboundrSignatureError("invalid_signature", "The id signature names a different email than the body.")
+    return WebhookDelivery(event=event, delivery_id=ids.delivery_id)

@@ -30,6 +30,7 @@ from inboundr import (
     InboundrSignatureError,
     read_webhook_headers,
     verify_webhook,
+    verify_webhook_delivery,
     verify_webhook_ids,
 )
 
@@ -276,3 +277,34 @@ def test_raw_asgi_bytes_headers_are_read() -> None:
         now=now,
     )
     assert ids.email_id == EMAIL_ID
+
+
+# --- verify_webhook_delivery: a delivery id you can deduplicate on ---------------------
+
+
+def delivery_headers(**overrides: str) -> dict[str, str]:
+    headers = {SIGNATURE_HEADER: sign(SECRET, BODY, NOW), **id_headers()}
+    headers.update(overrides)
+    return headers
+
+
+def test_verify_webhook_delivery_returns_the_event_and_a_signed_delivery_id() -> None:
+    delivery = verify_webhook_delivery(BODY, delivery_headers(), SECRET, now=now)
+    assert delivery.delivery_id == DELIVERY_ID
+    assert delivery.event["email"]["id"] == EMAIL_ID
+
+
+def test_a_replay_with_a_forged_delivery_id_is_rejected() -> None:
+    # The body signature still passes; only the id signature catches this.
+    rejects("invalid_signature", lambda: verify_webhook_delivery(BODY, delivery_headers(**{DELIVERY_ID_HEADER: "del_forged"}), SECRET, now=now))
+
+
+def test_a_replay_with_the_id_signature_stripped_is_rejected() -> None:
+    headers = delivery_headers()
+    del headers[ID_SIGNATURE_HEADER]
+    rejects("missing_header", lambda: verify_webhook_delivery(BODY, headers, SECRET, now=now))
+
+
+def test_id_headers_naming_another_email_are_rejected() -> None:
+    headers = delivery_headers(**{EMAIL_ID_HEADER: "em_other", ID_SIGNATURE_HEADER: sign_ids(SECRET, NOW, DELIVERY_ID, "em_other")})
+    rejects("invalid_signature", lambda: verify_webhook_delivery(BODY, headers, SECRET, now=now))

@@ -30,10 +30,12 @@ from ._webhooks import (
     LEGACY_DELIVERY_ID_HEADER,
     LEGACY_SIGNATURE_HEADER,
     SIGNATURE_HEADER,
+    WebhookDelivery,
     WebhookHeaders,
     WebhookIds,
     read_webhook_headers,
     verify_webhook,
+    verify_webhook_delivery,
     verify_webhook_ids,
 )
 
@@ -55,11 +57,13 @@ __all__ = [
     "LEGACY_SIGNATURE_HEADER",
     "SIGNATURE_HEADER",
     "SignatureFailureReason",
+    "WebhookDelivery",
     "WebhookHeaders",
     "WebhookIds",
     "__version__",
     "read_webhook_headers",
     "verify_webhook",
+    "verify_webhook_delivery",
     "verify_webhook_ids",
     *_types_all,
 ]

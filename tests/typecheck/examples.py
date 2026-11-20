@@ -12,6 +12,7 @@ from inboundr import (
     SentEmail,
     read_webhook_headers,
     verify_webhook,
+    verify_webhook_delivery,
     verify_webhook_ids,
 )
 
@@ -64,3 +65,8 @@ async def use_async() -> list[str]:
         page = await aclient.emails.list({"limit": 5})
         ids = [email["id"] async for email in aclient.emails.list_all()]
         return [page["data"][0]["id"], *ids]
+
+
+def dedupe(body: bytes, headers: dict[str, str], secret: str) -> str:
+    delivery = verify_webhook_delivery(body, headers, secret)
+    return delivery.delivery_id + ":" + delivery.event["email"]["id"]

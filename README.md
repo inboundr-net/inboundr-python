@@ -59,13 +59,18 @@ The secret is the `whsec_` value returned when you create the endpoint. Pass the
 
 ### Retries
 
-Failed deliveries are retried with the same delivery id. Use it to skip deliveries you have already handled:
+Failed deliveries are retried with the same delivery id. To skip deliveries you have already handled, verify with `verify_webhook_delivery`, which also checks the signature on the delivery id:
 
 ```python
-from inboundr import read_webhook_headers
+from inboundr import verify_webhook_delivery
 
-delivery_id = read_webhook_headers(request.headers).delivery_id
+delivery = verify_webhook_delivery(request.get_data(), request.headers, WEBHOOK_SECRET)
+if already_handled(delivery.delivery_id):
+    return "", 204
+email = delivery.event["email"]
 ```
+
+Don't deduplicate on the `x-inboundr-delivery-id` header read directly: it isn't covered by the body's signature, so a replayed delivery could carry any id.
 
 ### Missing body
 
